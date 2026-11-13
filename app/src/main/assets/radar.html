@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="pl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Radar</title>
+<style>
+html,body{margin:0;background:#000;color:#fff;font-family:monospace}
+#w{max-width:480px;margin:0 auto;padding:6px;box-sizing:border-box}
+#top{background:#6e4fa8;color:#ffd84a;font-weight:bold;padding:5px 10px;border-radius:12px 12px 0 0;font-size:13px;letter-spacing:1px}
+#cv{width:100%;display:block;image-rendering:pixelated;background:#9d9d9d;touch-action:none}
+#bot{display:flex;justify-content:space-between;align-items:center;background:#241546;border:2px solid #7b5cb3;border-radius:0 0 14px 14px;padding:2px 4px}
+#bot button{background:none;border:0;color:#ffd84a;font:bold 14px monospace;padding:10px 8px}
+#dbg{font-size:12px;color:#ddd;padding:4px 2px;min-height:32px}
+</style></head><body>
+<div id="w">
+<div id="top">RADAR <span id="sc">6.0</span> M/PX</div>
+<canvas id="cv"></canvas>
+<div id="bot"><button id="zo">1: -</button><button id="ce">&#9678;</button><button id="xy">KOORD.</button><button id="zi">3: +</button></div>
+<div id="dbg">start...</div>
+</div>
+<script>
+var W=240,H=320,RAD=900;
+var COL={land:'#9d9d9d',road:'#3f7a45',cas:'#1c3a20',park:'#5f9a55',water:'#6f9bc4'};
+var cv=document.getElementById('cv'),ctx=cv.getContext('2d');cv.width=W;cv.height=H;
+var scale=6,ox=0,oy=0,pos=null,center=null,data=null,loading=false,msg='szukam GPS...',info='',hits=[];
+
+// ---- own pixel icons (outlined, GTA-radar-like style) ----
+var PAL={k:'#111',w:'#fff',r:'#d8232a',g:'#2e9a3e',y:'#f0b030',b:'#8a5a2b',c:'#bfe3f5',s:'#999'};
+var ICONS={
+burger:['..kkkkkkk..','.kyyyyyyyk.','kyyyyyyyyyk','kkkkkkkkkkk','kgggggggggk','krrrrrrrrrk','kbbbbbbbbbk','kkkkkkkkkkk','.kyyyyyyyk.','..kkkkkkk..'],
+fork:['.k.k.k.kkk.','.k.k.k.kwk.','.kwkwkwkwk.','.kwwwwwkwk.','..kwwwkkwk.','...kwk.kwk.','...kwk.kwk.','...kwk.kwk.','...kwk.kwk.','...kkk.kkk.'],
+cocktail:['kkkkkkkkkkk','kccccccccck','.kccccccck.','..kccccck..','...kkckk...','....kck....','....kck....','....kck....','...kkkkk...'],
+cross:['...kkkkk...','...krrrk...','...krrrk...','kkkkrrrkkkk','krrrrrrrrrk','krrrrrrrrrk','krrrrrrrrrk','kkkkrrrkkkk','...krrrk...','...krrrk...','...kkkkk...'],
+dollar:['kkkkkkkkk','kgggwgggk','kggwwwggk','kgwgwgggk','kggwwwggk','kgggwgwgk','kggwwwggk','kgggwgggk','kkkkkkkkk'],
+shirt:['kkk.....kkk','kwwkkkkkwwk','kwwwwwwwwwk','kkwwwwwwwkk','.kwwwrrwwk.','.kwwwrrwwk.','.kwwwwwwwk.','.kwwwwwwwk.','..kkkkkkk..']
+};
+ICONS.pharm=[];for(var q=0;q<ICONS.cross.length;q++)ICONS.pharm.push(ICONS.cross[q].replace(/r/g,'g'));
+function icon(name,cx,cy){
+  var a=ICONS[name],S=2,h=a.length,w=a[0].length,x0=Math.round(cx-w*S/2),y0=Math.round(cy-h*S/2);
+  for(var y=0;y<h;y++)for(var x=0;x<w;x++){var c=a[y].charAt(x);if(c==='.')continue;ctx.fillStyle=PAL[c];ctx.fillRect(x0+x*S,y0+y*S,S,S);}
+}
+function poiIcon(t){
+  var a=t.amenity,s=t.shop;
+  if(a==='fast_food')return'burger';
+  if(a==='restaurant'||a==='cafe')return'fork';
+  if(a==='bar'||a==='pub')return'cocktail';
+  if(a==='hospital')return'cross';
+  if(a==='pharmacy')return'pharm';
+  if(a==='atm'||a==='bank')return'dollar';
+  if(s==='clothes')return'shirt';
+  return null;
+}
+
+// ---- projection (view offset ox,oy in canvas px) ----
+function proj(lat,lon){
+  var dx=(lon-pos.lon)*111320*Math.cos(pos.lat*Math.PI/180),dy=(lat-pos.lat)*110540;
+  return [W/2+dx/scale+ox,H/2-dy/scale+oy];
+}
+function dist(a,b){var dx=(a.lon-b.lon)*111320*Math.cos(a.lat*Math.PI/180),dy=(a.lat-b.lat)*110540;return Math.sqrt(dx*dx+dy*dy);}
+function viewCenter(){return {lat:pos.lat+oy*scale/110540,lon:pos.lon-ox*scale/(111320*Math.cos(pos.lat*Math.PI/180))};}
+
+// ---- drawing ----
+function path(g){ctx.beginPath();for(var i=0;i<g.length;i++){var p=proj(g[i].lat,g[i].lon);if(i)ctx.lineTo(p[0],p[1]);else ctx.moveTo(p[0],p[1]);}}
+function roadW(h){
+  if(h==='motorway'||h==='trunk'||h==='primary')return 5;
+  if(h==='secondary'||h==='tertiary')return 4;
+  if(h==='residential'||h==='unclassified'||h==='living_street'||h==='service')return 3;
+  return 0;
+}
+function draw(){
+  var t0=Date.now(),n=0,i,e;hits=[];
+  ctx.fillStyle=COL.land;ctx.fillRect(0,0,W,H);
+  if(pos&&data){
+    var els=data.elements;ctx.lineJoin='round';ctx.lineCap='round';
+    for(i=0;i<els.length;i++){e=els[i];if(e.type!=='way'||!e.geometry)continue;var t=e.tags||{};
+      var isW=t.natural==='water',isP=t.leisure==='park'||t.leisure==='garden'||t.landuse==='grass'||t.landuse==='forest'||t.landuse==='recreation_ground';
+      if(isW||isP){path(e.geometry);ctx.fillStyle=isW?COL.water:COL.park;ctx.fill();n++;}}
+    var rs=[];
+    for(i=0;i<els.length;i++){e=els[i];if(e.type==='way'&&e.geometry&&e.tags&&e.tags.highway){var w=roadW(e.tags.highway);if(w)rs.push([w,e.geometry]);}}
+    for(i=0;i<rs.length;i++){path(rs[i][1]);ctx.lineWidth=rs[i][0]+2;ctx.strokeStyle=COL.cas;ctx.stroke();}
+    for(i=0;i<rs.length;i++){path(rs[i][1]);ctx.lineWidth=rs[i][0];ctx.strokeStyle=COL.road;ctx.stroke();n++;}
+    for(i=0;i<els.length;i++){e=els[i];if(e.type!=='node'||!e.tags)continue;var ic=poiIcon(e.tags);if(!ic)continue;
+      var p=proj(e.lat,e.lon);if(p[0]<-12||p[0]>W+12||p[1]<-12||p[1]>H+12)continue;
+      icon(ic,p[0],p[1]);hits.push({x:p[0],y:p[1],n:e.tags.name||ic});n++;}
+  }
+  if(pos){var m=proj(pos.lat,pos.lon),mx=Math.round(m[0]),my=Math.round(m[1]);
+    ctx.fillStyle='#111';ctx.fillRect(mx-6,my-1,13,3);ctx.fillRect(mx-1,my-6,3,13);
+    ctx.fillStyle='#fff';ctx.fillRect(mx-5,my,11,1);ctx.fillRect(mx,my-5,1,11);}
+  document.getElementById('sc').textContent=scale.toFixed(1);
+  document.getElementById('dbg').textContent=(info?info+'  |  ':'')+msg+'  ('+(Date.now()-t0)+' ms, '+n+' obj)';
+}
+
+// ---- data ----
+function fetchAt(lat,lon){
+  if(loading)return;loading=true;center={lat:lat,lon:lon};msg='pobieram mape...';draw();
+  var a='(around:'+RAD+','+lat+','+lon+')';
+  var q='[out:json][timeout:25];(way["highway"]'+a+';way["leisure"~"park|garden"]'+a+';way["natural"="water"]'+a+';way["landuse"~"grass|forest|recreation_ground"]'+a+';'
+   +'node["amenity"~"restaurant|fast_food|cafe|bar|pub|hospital|pharmacy|atm|bank"]'+a+';node["shop"="clothes"]'+a+';);out geom;';
+  var x=new XMLHttpRequest();x.open('POST','https://overpass-api.de/api/interpreter');
+  x.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
+  x.onload=function(){loading=false;try{data=JSON.parse(x.responseText);msg='ok';}catch(er){msg='serwer zajety, sprobuje ponownie';center=null;}draw();};
+  x.onerror=function(){loading=false;center=null;msg='brak sieci';draw();};
+  x.send('data='+encodeURIComponent(q));
+}
+function setPos(lat,lon,save){
+  pos={lat:lat,lon:lon};
+  if(save){try{localStorage.setItem('radar_pos',lat+','+lon);}catch(e){}}
+  if(!center||dist(pos,center)>300)fetchAt(lat,lon);
+  draw();
+}
+
+// ---- GPS: auto start, remember last position ----
+window.nativePos=function(lat,lon){msg='GPS ok';setPos(lat,lon,true);};
+function startGps(){
+  var s=null;try{s=localStorage.getItem('radar_pos');}catch(e){}
+  if(s){var p=s.split(',');setPos(parseFloat(p[0]),parseFloat(p[1]),false);msg='ostatnia pozycja, szukam GPS...';draw();}
+  if(window.Android){msg=(s?'ostatnia pozycja, ':'')+'czekam na GPS...';draw();return;}
+  if(!navigator.geolocation){msg='przegladarka bez GPS';if(!s)askCoords();return;}
+  navigator.geolocation.watchPosition(function(p){msg='GPS ok';setPos(p.coords.latitude,p.coords.longitude,true);},
+    function(er){msg='GPS: '+(er&&er.code===1?'odmowa zgody':'brak sygnalu');if(!pos)askCoords();draw();},
+    {enableHighAccuracy:true,maximumAge:5000,timeout:30000});
+}
+function askCoords(){
+  var s=prompt('Wpisz szerokosc,dlugosc (np. 50.2606,19.0302):','');if(!s)return;
+  var p=s.split(','),la=parseFloat(p[0]),lo=parseFloat(p[1]);
+  if(isNaN(la)||isNaN(lo)){msg='zly format';draw();return;}
+  center=null;ox=oy=0;setPos(la,lo,true);
+}
+
+// ---- touch: drag = pan, pinch = zoom, tap = name ----
+var drag=null,pinch=0;
+function d2(t){var dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;return Math.sqrt(dx*dx+dy*dy);}
+function kf(){return W/cv.getBoundingClientRect().width;}
+cv.addEventListener('touchstart',function(e){e.preventDefault();var t=e.touches;
+  if(t.length===1){drag={x:t[0].clientX,y:t[0].clientY,sx:t[0].clientX,sy:t[0].clientY,t:Date.now()};pinch=0;}
+  else if(t.length===2){pinch=d2(t);drag=null;}},false);
+cv.addEventListener('touchmove',function(e){e.preventDefault();var t=e.touches;
+  if(t.length===1&&drag){var k=kf();ox+=(t[0].clientX-drag.x)*k;oy+=(t[0].clientY-drag.y)*k;drag.x=t[0].clientX;drag.y=t[0].clientY;draw();}
+  else if(t.length===2&&pinch){var nd=d2(t);scale=Math.min(30,Math.max(2,scale*pinch/nd));pinch=nd;draw();}},false);
+cv.addEventListener('touchend',function(e){e.preventDefault();
+  if(drag&&e.touches.length===0){
+    var mv=Math.abs(drag.x-drag.sx)+Math.abs(drag.y-drag.sy);
+    if(mv<10&&Date.now()-drag.t<400){
+      var r=cv.getBoundingClientRect(),k=kf(),px=(drag.sx-r.left)*k,py=(drag.sy-r.top)*k,best=null,bd=18;
+      for(var i=0;i<hits.length;i++){var d=Math.abs(hits[i].x-px)+Math.abs(hits[i].y-py);if(d<bd){bd=d;best=hits[i];}}
+      info=best?best.n:'';draw();
+    }else if(pos){var vc=viewCenter();if(!center||dist(vc,center)>450){fetchAt(vc.lat,vc.lon);}}
+  }
+  if(e.touches.length===0){drag=null;pinch=0;}},false);
+
+document.getElementById('zi').onclick=function(){scale=Math.max(2,scale/1.5);draw();};
+document.getElementById('zo').onclick=function(){scale=Math.min(30,scale*1.5);draw();};
+document.getElementById('ce').onclick=function(){ox=oy=0;info='';if(pos&&(!center||dist(pos,center)>450))fetchAt(pos.lat,pos.lon);draw();};
+document.getElementById('xy').onclick=askCoords;
+draw();startGps();
+</script></body></html>
