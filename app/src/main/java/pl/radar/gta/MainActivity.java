@@ -38,6 +38,8 @@ public class MainActivity extends Activity implements LocationListener {
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(true);
         s.setAllowUniversalAccessFromFileURLs(true);
+                s.setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        web.clearCache(true);
 
         web.setWebChromeClient(new WebChromeClient());
         web.setWebViewClient(new WebViewClient() {
