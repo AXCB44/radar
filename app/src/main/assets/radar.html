@@ -95,12 +95,17 @@ function fetchAt(lat,lon){
   var a='(around:'+RAD+','+lat+','+lon+')';
   var q='[out:json][timeout:25];(way["highway"]'+a+';way["leisure"~"park|garden"]'+a+';way["natural"="water"]'+a+';way["landuse"~"grass|forest|recreation_ground"]'+a+';'
    +'node["amenity"~"restaurant|fast_food|cafe|bar|pub|hospital|pharmacy|atm|bank"]'+a+';node["shop"="clothes"]'+a+';);out geom;';
+  if(window.Android&&Android.fetch){Android.fetch(q);return;}
   var x=new XMLHttpRequest();x.open('POST','https://overpass-api.de/api/interpreter');
   x.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
   x.onload=function(){loading=false;try{data=JSON.parse(x.responseText);msg='ok';}catch(er){msg='serwer zajety, sprobuje ponownie';center=null;}draw();};
   x.onerror=function(){loading=false;center=null;msg='brak sieci';draw();};
   x.send('data='+encodeURIComponent(q));
 }
+window.onOverpass=function(kind,text){loading=false;
+  if(kind==='ok'){try{data=JSON.parse(text);msg='ok';}catch(er){msg='zle dane z serwera';center=null;}}
+  else{msg='blad: '+text;center=null;}
+  draw();};
 function setPos(lat,lon,save){
   pos={lat:lat,lon:lon};
   if(save){try{localStorage.setItem('radar_pos',lat+','+lon);}catch(e){}}
