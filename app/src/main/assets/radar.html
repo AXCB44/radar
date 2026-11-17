@@ -18,7 +18,7 @@ html,body{margin:0;background:#000;color:#fff;font-family:monospace}
 <div id="dbg">start...</div>
 </div>
 <script>
-var W=240,H=320,RAD=900;
+var W=240,H=320,RAD=500;
 var COL={land:'#9d9d9d',road:'#3f7a45',cas:'#1c3a20',park:'#5f9a55',water:'#6f9bc4'};
 var cv=document.getElementById('cv'),ctx=cv.getContext('2d');cv.width=W;cv.height=H;
 var scale=6,ox=0,oy=0,pos=null,center=null,data=null,loading=false,msg='szukam GPS...',info='',hits=[];
@@ -93,8 +93,10 @@ function draw(){
 function fetchAt(lat,lon){
   if(loading)return;loading=true;center={lat:lat,lon:lon};msg='pobieram mape...';draw();
   var a='(around:'+RAD+','+lat+','+lon+')';
-  var q='[out:json][timeout:25];(way["highway"]'+a+';way["leisure"~"park|garden"]'+a+';way["natural"="water"]'+a+';way["landuse"~"grass|forest|recreation_ground"]'+a+';'
-   +'node["amenity"~"restaurant|fast_food|cafe|bar|pub|hospital|pharmacy|atm|bank"]'+a+';node["shop"="clothes"]'+a+';);out geom;';
+  var q='[out:json][timeout:20];('
+   +'way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street|service)$"]'+a+';'
+   +'way["leisure"~"^(park|garden)$"]'+a+';way["natural"="water"]'+a+';'
+   +'node["amenity"~"^(restaurant|fast_food|cafe|bar|pub|hospital|pharmacy|atm|bank)$"]'+a+';node["shop"="clothes"]'+a+';);out geom;';
   if(window.Android&&Android.fetch){Android.fetch(q);return;}
   var x=new XMLHttpRequest();x.open('POST','https://overpass-api.de/api/interpreter');
   x.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
