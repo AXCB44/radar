@@ -20,11 +20,66 @@ public class MainActivity extends Activity implements LocationListener {
     private WebView web;
     private LocationManager lm;
 
-    public static class Bridge {
+    public class Bridge {
         @JavascriptInterface
         public boolean ok() {
             return true;
         }
+
+        @JavascriptInterface
+        public void fetch(final String query) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String[] urls = {
+                        "https://overpass-api.de/api/interpreter",
+                        "https://overpass.private.coffee/api/interpreter",
+                        "https://overpass.kumi.systems/api/interpreter"
+                    };
+                    String last = "";
+                    for (String u : urls) {
+                        try {
+                            java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(u).openConnection();
+                            c.setRequestMethod("POST");
+                            c.setConnectTimeout(15000);
+                            c.setReadTimeout(40000);
+                            c.setDoOutput(true);
+                            c.setRequestProperty("User-Agent", "RadarGTA/1.0 (personal hobby app)");
+                            c.setRequestProperty("Accept", "*/*");
+                            c.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+                            byte[] body = ("data=" + java.net.URLEncoder.encode(query, "UTF-8")).getBytes("UTF-8");
+                            c.getOutputStream().write(body);
+                            int code = c.getResponseCode();
+                            if (code == 200) {
+                                java.io.InputStream in = c.getInputStream();
+                                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                                byte[] buf = new byte[8192];
+                                int n;
+                                while ((n = in.read(buf)) > 0) {
+                                    bo.write(buf, 0, n);
+                                }
+                                deliver("ok", bo.toString("UTF-8"));
+                                return;
+                            }
+                            last = u.substring(8, 22) + " HTTP " + code;
+                        } catch (Exception e) {
+                            last = e.getClass().getSimpleName() + ": " + e.getMessage();
+                        }
+                    }
+                    deliver("err", last);
+                }
+            }).start();
+        }
+    }
+
+    private void deliver(String kind, String payload) {
+        final String js = "window.onOverpass&&window.onOverpass('" + kind + "'," + org.json.JSONObject.quote(payload) + ")";
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                web.evaluateJavascript(js, null);
+            }
+        });
     }
 
     @Override
@@ -38,8 +93,6 @@ public class MainActivity extends Activity implements LocationListener {
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(true);
         s.setAllowUniversalAccessFromFileURLs(true);
-                s.setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        web.clearCache(true);
 
         web.setWebChromeClient(new WebChromeClient());
         web.setWebViewClient(new WebViewClient() {
